@@ -381,8 +381,9 @@ def pick_evenly(names, scores, k=5):
 
 
 # ------------------------------------------------------------------- export
-def export(root, name, selection, corners, auto_detect=False):
+def export(root, name, selection, corners, auto_detect=False, custom_corners=None):
     """selection: {depth: [filenames in reserved/<depth>m]}.
+    custom_corners: optional dict {filename: [[x,y], ...]} overriding default corners per photo.
     reserved -> chosen -> cropped (copied, then overwritten in place with the crop)."""
     L = layout(root, name)
     n = 0
@@ -400,9 +401,11 @@ def export(root, name, selection, corners, auto_detect=False):
             shutil.copy2(src, chosen)
             shutil.copy2(chosen, cropped)
             
-            # Use Auto-Detection if toggled on
-            photo_corners = corners
-            if auto_detect:
+            # Check if user specified a custom calibration for this specific photo
+            if custom_corners and f in custom_corners:
+                photo_corners = custom_corners[f]
+            elif auto_detect:
+                # Use Auto-Detection if toggled on
                 rgb, _ = load_rgb(src)
                 detected, conf, method = detect_corners(rgb)
                 
@@ -410,11 +413,13 @@ def export(root, name, selection, corners, auto_detect=False):
                 if detected is not None and method == "classical":
                     photo_corners = detected
                 else:
-                    # Log to warnings file if fallback corners are used
+                    photo_corners = corners
                     with open(warn_path, "a") as wf:
                         wf.write(f"{d}m / {f}: fallback corners used (conf={conf:.2f})\n")
+            else:
+                photo_corners = corners
 
             crop_in_place(cropped, photo_corners)
             n += 1
             
-    return n
+    return n

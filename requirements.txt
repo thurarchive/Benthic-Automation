@@ -3,3 +3,6 @@ streamlit-image-coordinates
 opencv-python-headless
 pillow
 numpy
+ultralytics
+fastapi
+uvicorn

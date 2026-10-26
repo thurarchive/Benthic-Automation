@@ -1,0 +1,54 @@
+@echo off
+setlocal
+title IOP Benthic Survey Prep Tool v0.2.0
+cd /d "%~dp0"
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+
+echo ====================================================================
+echo  IOP Benthic Survey Prep Tool - v0.2.0 - Standalone Desktop Mode
+echo ====================================================================
+echo.
+
+set "PY="
+if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
+if not defined PY if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
+if not defined PY where py >nul 2>&1 && set "PY=py -3"
+if not defined PY where python >nul 2>&1 && set "PY=python"
+
+if not defined PY goto nopython
+echo Using Python: %PY%
+echo.
+
+REM Importing server also imports benthic_core, so any missing package shows up here
+%PY% -c "import server"
+if errorlevel 1 goto nodeps
+
+if not exist "frontend\dist\index.html" (
+    echo [WARNING] frontend\dist\index.html not found. Run "npm run build" in the frontend folder first.
+    echo.
+)
+
+echo Starting server and opening application...
+echo You can also open your browser manually at: http://127.0.0.1:8000
+echo.
+%PY% server.py
+echo.
+echo [NOTICE] Server stopped. Exit code: %errorlevel%
+goto end
+
+:nopython
+echo [ERROR] Python 3.10+ was not found. Install it, or create a .venv in this folder.
+goto end
+
+:nodeps
+echo.
+echo [ERROR] The app failed to import. See the message above.
+echo If a package is missing, install it into the same environment, for example:
+echo     %PY% -m pip install -r requirements.txt
+goto end
+
+:end
+echo.
+pause
+endlocal
