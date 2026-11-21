@@ -105,6 +105,55 @@ def test_survey_name():
     return _result("survey_name", ok, n)
 
 
+def test_export_with_depth_and_progress():
+    """Verify export applies depth-level corners and calls progress callback."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        name = "BS_20261121_SD"
+        L = core.layout(root, name)
+        (L["reserved"] / "20m").mkdir(parents=True)
+        (L["reserved"] / "15m").mkdir(parents=True)
+
+        # Create dummy test images
+        img1 = np.full((400, 400, 3), 120, dtype=np.uint8)
+        img2 = np.full((400, 400, 3), 180, dtype=np.uint8)
+        cv2.imwrite(str(L["reserved"] / "20m" / "photo1.jpg"), img1)
+        cv2.imwrite(str(L["reserved"] / "15m" / "photo2.jpg"), img2)
+
+        global_corners = [[10, 10], [390, 10], [390, 390], [10, 390]]
+        depth_20_corners = [[20, 20], [380, 20], [380, 380], [20, 380]]
+        depth_corners = {20: depth_20_corners}
+
+        selection = {
+            20: ["photo1.jpg"],
+            15: ["photo2.jpg"],
+        }
+
+        progress_calls = []
+
+        def on_prog(cur, total, fn, d):
+            progress_calls.append((cur, total, fn, d))
+
+        n = core.export(
+            root,
+            name,
+            selection,
+            global_corners,
+            auto_detect=False,
+            depth_corners=depth_corners,
+            progress_callback=on_prog,
+        )
+
+        ok = (
+            n == 2
+            and (L["cropped"] / "photo1.jpg").exists()
+            and (L["cropped"] / "photo2.jpg").exists()
+            and len(progress_calls) == 2
+            and progress_calls[-1][0] == 2
+        )
+        return _result("export_with_depth_and_progress", ok, f"exported={n} prog_calls={len(progress_calls)}")
+
+
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     results = [
@@ -114,6 +163,7 @@ if __name__ == "__main__":
         test_detect_corners_classical(),
         test_detect_obstruction_clean(),
         test_detect_obstruction_hand_heuristic(),
+        test_export_with_depth_and_progress(),
     ]
     total = len(results)
     passed = sum(results)

@@ -5,6 +5,38 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) conventions.
 
 ---
 
+## [0.2.1] — 2026-11-21
+
+### Added
+
+- **5-Step Pipeline Structure**:
+  1. Ingest & Setup
+  2. Manual Pick (Gallery per depth)
+  3. 1st Quadrat Calibration
+  4. View & Slide / Adjust (Custom depth & photo overrides)
+  5. Select & Export
+- **Loading & Progress Tracking** on every phase:
+  - Ingestion progress overlay with elapsed timer
+  - Export progress modal with real-time progress bar, photo item counter, and ETA countdown (`ETA: ~Xs`)
+  - Fast feedback spinners on photo streaming and calibration saves
+- **Lightbox Centered Popup Modal**:
+  - Replaced inline top-of-page review with fixed centered backdrop popup (`.modal-backdrop`)
+  - Full keyboard navigation: `←`/`A` & `→`/`D` to slide candidate photos, `Esc` to close
+- **Depth-Wide Custom Re-calibration**:
+  - `POST /api/calibrate-depth` endpoint saving depth-specific quadrat corners (`depth_overrides`)
+  - `📐 Calibrate Depth {d}m` modal in review step applying quadrat calibration to all photos at that depth
+  - Fallback hierarchy: `photo override` -> `depth calibration` -> `global survey calibration`
+- **Candidate Pool Fix**:
+  - Removed rigid 5-segment candidate slicing
+  - Full remaining photo pool available as replacement candidates for every slot in a depth
+  - Horizontal candidate thumbnail strip in lightbox for instant 1-click candidate replacement
+- **Manual Pick Gallery (Reverted YOLO Autopick)**:
+  - Responsive visual gallery per depth with `#1`..`#5` glowing selection badges and click-to-undo
+  - `⚡ Evenly Pick 5 Photos` helper action
+  - `GET /api/depth-photos` endpoint for fast image listing
+
+---
+
 ## [0.2.0] — 2026-10-26
 
 ### Added

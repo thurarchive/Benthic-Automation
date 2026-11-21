@@ -3,6 +3,7 @@ Provides fast REST APIs, image streaming, quadrat calibration, candidate scoring
 """
 import io
 import json
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
@@ -16,7 +17,19 @@ from pydantic import BaseModel
 
 import benthic_core as core
 
-app = FastAPI(title="IOP Benthic Survey Prep API", version="2.0.0")
+app = FastAPI(title="IOP Benthic Survey Prep API", version="2.1.0")
+
+# Global export progress state
+EXPORT_PROGRESS = {
+    "status": "idle",  # "idle" | "running" | "done" | "error"
+    "current": 0,
+    "total": 0,
+    "filename": "",
+    "depth": "",
+    "start_time": 0.0,
+    "elapsed": 0.0,
+    "error": None,
+}
 
 # Enable CORS for Vite dev server (default port 5173)
 app.add_middleware(
@@ -62,13 +75,20 @@ class PhotoCalibrationRequest(BaseModel):
     crop_box: Optional[dict] = None
 
 
+class DepthCalibrationRequest(BaseModel):
+    base_dir: str
+    depth: int
+    corners: List[List[float]]
+
+
 class ExportRequest(BaseModel):
     out_root_path: str
     survey_name: str
     selection: dict  # { "25": ["photo1.jpg", ...], ... }
     corners: List[List[float]]
-    auto_detect: bool = True
+    auto_detect: bool = False
     custom_corners: Optional[dict] = None  # { "photo1.jpg": [[x,y], ...], ... }
+    depth_corners: Optional[dict] = None   # { "25": [[x,y], ...], ... }
 
 
 # ------------------------------------------------------------------ API Routes
@@ -163,7 +183,33 @@ GLOBAL_CAL_FILE = Path.home() / ".iop_bruv_calibration.json"
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.2.1"}
+
+
+@app.get("/api/depth-photos")
+def get_depth_photos(base_dir: str, depths: str):
+    """Retrieve all raw photo files per depth in reserved folder for manual gallery pick."""
+    base = Path(base_dir)
+    reserved = base / f"{base.name} reserved"
+    if not reserved.exists():
+        raise HTTPException(status_code=404, detail="Reserved folder not found")
+
+    depth_list = [int(d.strip()) for d in depths.split(",") if d.strip().isdigit()]
+    result = {}
+
+    for d in depth_list:
+        folder = reserved / f"{d}m"
+        if not folder.exists():
+            result[str(d)] = []
+            continue
+
+        files = sorted(
+            list(folder.glob("*.JPG")) + list(folder.glob("*.jpg")) + list(folder.glob("*.PNG")) + list(folder.glob("*.png")),
+            key=core.natural_key,
+        )
+        result[str(d)] = [{"depth": d, "filename": f.name, "path": str(f)} for f in files]
+
+    return {"photos": result}
 
 
 @app.post("/api/calibrate")
@@ -180,6 +226,17 @@ def save_calibration(req: CalibrationSaveRequest):
         "saved_at": datetime.utcnow().isoformat(),
     }
     cal_file = base / "calibration.json"
+    existing_data = {}
+    if cal_file.exists():
+        try:
+            existing_data = json.loads(cal_file.read_text())
+        except Exception:
+            pass
+    
+    # Preserve existing overrides
+    cal_data["photo_overrides"] = existing_data.get("photo_overrides", {})
+    cal_data["depth_overrides"] = existing_data.get("depth_overrides", {})
+
     cal_file.write_text(json.dumps(cal_data, indent=2))
 
     try:
@@ -198,17 +255,46 @@ def get_calibration(base_dir: Optional[str] = None):
         cal_file = base / "calibration.json"
         if cal_file.exists():
             try:
-                return json.loads(cal_file.read_text())
+                data = json.loads(cal_file.read_text())
+                data.setdefault("photo_overrides", {})
+                data.setdefault("depth_overrides", {})
+                return data
             except Exception:
                 pass
 
     if GLOBAL_CAL_FILE.exists():
         try:
-            return json.loads(GLOBAL_CAL_FILE.read_text())
+            data = json.loads(GLOBAL_CAL_FILE.read_text())
+            data.setdefault("photo_overrides", {})
+            data.setdefault("depth_overrides", {})
+            return data
         except Exception:
             pass
 
-    return {"corners": None}
+    return {"corners": None, "photo_overrides": {}, "depth_overrides": {}}
+
+
+@app.post("/api/calibrate-depth")
+def save_depth_calibration(req: DepthCalibrationRequest):
+    """Save custom calibration crop specifically for an entire depth."""
+    base = Path(req.base_dir)
+    cal_file = base / "calibration.json"
+    cal_data = {}
+    if cal_file.exists():
+        try:
+            cal_data = json.loads(cal_file.read_text())
+        except Exception:
+            pass
+
+    if "depth_overrides" not in cal_data:
+        cal_data["depth_overrides"] = {}
+
+    cal_data["depth_overrides"][str(req.depth)] = {
+        "corners": req.corners,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    cal_file.write_text(json.dumps(cal_data, indent=2))
+    return {"status": "ok", "depth": req.depth, "corners": req.corners}
 
 
 @app.post("/api/calibrate-photo")
@@ -345,10 +431,41 @@ def log_decision_endpoint(req: DecisionRequest):
     return {"status": "logged"}
 
 
+@app.get("/api/export-progress")
+def get_export_progress():
+    """Return live status of photo export with current count and elapsed time."""
+    global EXPORT_PROGRESS
+    prog = dict(EXPORT_PROGRESS)
+    if prog["status"] == "running" and prog["start_time"] > 0:
+        prog["elapsed"] = round(time.time() - prog["start_time"], 1)
+    return prog
+
+
 @app.post("/api/export")
 def run_export(req: ExportRequest):
     """Copy chosen photos to chosen/ and generate warped crops in cropped/."""
+    global EXPORT_PROGRESS
     out_root = Path(req.out_root_path)
+    total_items = sum(len(v) for v in req.selection.values())
+    EXPORT_PROGRESS = {
+        "status": "running",
+        "current": 0,
+        "total": total_items,
+        "filename": "",
+        "depth": "",
+        "start_time": time.time(),
+        "elapsed": 0.0,
+        "error": None,
+    }
+
+    def on_progress(current, total, filename, depth):
+        global EXPORT_PROGRESS
+        EXPORT_PROGRESS["current"] = current
+        EXPORT_PROGRESS["total"] = total
+        EXPORT_PROGRESS["filename"] = filename
+        EXPORT_PROGRESS["depth"] = str(depth)
+        EXPORT_PROGRESS["elapsed"] = round(time.time() - EXPORT_PROGRESS["start_time"], 1)
+
     try:
         # Convert string depth keys back to ints for core.export
         selection_int = {int(k): v for k, v in req.selection.items()}
@@ -360,12 +477,17 @@ def run_export(req: ExportRequest):
             corners_tuple,
             auto_detect=req.auto_detect,
             custom_corners=req.custom_corners,
+            depth_corners=req.depth_corners,
+            progress_callback=on_progress,
         )
 
-        
         L = core.layout(out_root, req.survey_name)
         warn_path = L["base"] / "crop_warnings.txt"
         has_warnings = warn_path.exists()
+
+        EXPORT_PROGRESS["status"] = "done"
+        EXPORT_PROGRESS["current"] = n
+        EXPORT_PROGRESS["elapsed"] = round(time.time() - EXPORT_PROGRESS["start_time"], 1)
 
         return {
             "status": "ok",
@@ -374,6 +496,8 @@ def run_export(req: ExportRequest):
             "has_warnings": has_warnings,
         }
     except Exception as e:
+        EXPORT_PROGRESS["status"] = "error"
+        EXPORT_PROGRESS["error"] = str(e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -481,7 +605,7 @@ if __name__ == "__main__":
         webbrowser.open(URL)
 
     print("=" * 65)
-    print("  IOP Benthic Survey Prep Tool - V0.2.0")
+    print("  IOP Benthic Survey Prep Tool - V0.2.1")
     print(f"  Server running on: {URL}")
     print("  Press Ctrl+C in this window to stop.")
     print("=" * 65)

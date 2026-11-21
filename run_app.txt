@@ -1,24 +1,27 @@
 @echo off
 setlocal
-title IOP Benthic Survey Prep Tool v0.2.0
+title IOP Benthic Survey Prep Tool v0.2.1
 cd /d "%~dp0"
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 
 echo ====================================================================
-echo  IOP Benthic Survey Prep Tool - v0.2.0 - Standalone Desktop Mode
+echo  IOP Benthic Survey Prep Tool - v0.2.1 - Standalone Desktop Mode
 echo ====================================================================
 echo.
 
 set "PY="
-where py >nul 2>&1 && set "PY=py -3"
+if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
+if not defined PY if exist "venv\Scripts\python.exe" set "PY=venv\Scripts\python.exe"
+if not defined PY where py >nul 2>&1 && set "PY=py -3"
 if not defined PY where python >nul 2>&1 && set "PY=python"
 
 if not defined PY goto nopython
-%PY% --version >nul 2>&1
-if errorlevel 1 goto nopython
+echo Using Python: %PY%
+echo.
 
-%PY% -c "import fastapi, uvicorn, cv2, numpy, pydantic" >nul 2>&1
+REM Importing server also imports benthic_core, so any missing package shows up here
+%PY% -c "import server"
 if errorlevel 1 goto nodeps
 
 if not exist "frontend\dist\index.html" (
@@ -35,12 +38,14 @@ echo [NOTICE] Server stopped. Exit code: %errorlevel%
 goto end
 
 :nopython
-echo [ERROR] Python 3.10+ was not found. Install it and tick "Add Python to PATH".
+echo [ERROR] Python 3.10+ was not found. Install it, or create a .venv in this folder.
 goto end
 
 :nodeps
-echo [ERROR] Missing Python packages. Run:
-echo     pip install fastapi uvicorn opencv-python numpy pydantic
+echo.
+echo [ERROR] The app failed to import. See the message above.
+echo If a package is missing, install it into the same environment, for example:
+echo     %PY% -m pip install -r requirements.txt
 goto end
 
 :end

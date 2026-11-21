@@ -1,12 +1,12 @@
 @echo off
 setlocal
-title IOP Benthic Survey Prep Tool v0.2.0
+title IOP Benthic Survey Prep Tool v0.2.1
 cd /d "%~dp0"
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
 
 echo ====================================================================
-echo  IOP Benthic Survey Prep Tool - v0.2.0 - Standalone Desktop Mode
+echo  IOP Benthic Survey Prep Tool - v0.2.1 - Standalone Desktop Mode
 echo ====================================================================
 echo.
 
