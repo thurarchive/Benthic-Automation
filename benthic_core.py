@@ -373,27 +373,42 @@ def combine_scores(raw):
     return (0.6 * sharp_n + 0.3 * even + 0.1 * clip).tolist()
 
 
-def pick_evenly(names, scores, k=5):
+def pick_evenly(names, scores=None, k=5):
     if len(names) <= k:
         return list(names)
     segs = np.array_split(np.arange(len(names)), k)
-    return [names[max(seg, key=lambda i: scores[i])] for seg in segs]
+    if scores is not None and len(scores) == len(names):
+        return [names[max(seg, key=lambda i: scores[i])] for seg in segs]
+    # Pick middle index of each segment
+    return [names[int(seg[len(seg) // 2])] for seg in segs]
 
 
 # ------------------------------------------------------------------- export
-def export(root, name, selection, corners, auto_detect=False, custom_corners=None):
+def export(root, name, selection, corners, auto_detect=False, custom_corners=None, depth_corners=None, progress_callback=None):
     """selection: {depth: [filenames in reserved/<depth>m]}.
     custom_corners: optional dict {filename: [[x,y], ...]} overriding default corners per photo.
+    depth_corners: optional dict {depth: [[x,y], ...]} overriding corners per depth.
+    Priority: custom_corners (photo) -> depth_corners (depth) -> auto_detect -> survey corners.
     reserved -> chosen -> cropped (copied, then overwritten in place with the crop)."""
     L = layout(root, name)
+    L["chosen"].mkdir(parents=True, exist_ok=True)
+    L["cropped"].mkdir(parents=True, exist_ok=True)
     n = 0
     warn_path = L["base"] / "crop_warnings.txt"
     
     # clear previous warning logs if starting a new export
     if warn_path.exists():
         warn_path.unlink()
+
+    total_count = sum(len(files) for files in selection.values())
         
     for d, files in selection.items():
+        # Resolve depth-specific corners if available
+        d_key = str(d)
+        d_corners = None
+        if depth_corners:
+            d_corners = depth_corners.get(d) or depth_corners.get(d_key)
+
         for f in files:
             src = L["reserved"] / f"{d}m" / f
             chosen = L["chosen"] / f
@@ -401,9 +416,15 @@ def export(root, name, selection, corners, auto_detect=False, custom_corners=Non
             shutil.copy2(src, chosen)
             shutil.copy2(chosen, cropped)
             
-            # Check if user specified a custom calibration for this specific photo
+            # Check corner resolution priority:
+            # 1. Per-photo custom override
+            # 2. Per-depth custom override
+            # 3. Auto-detection (if enabled)
+            # 4. Global survey default
             if custom_corners and f in custom_corners:
                 photo_corners = custom_corners[f]
+            elif d_corners:
+                photo_corners = d_corners
             elif auto_detect:
                 # Use Auto-Detection if toggled on
                 rgb, _ = load_rgb(src)
@@ -421,5 +442,10 @@ def export(root, name, selection, corners, auto_detect=False, custom_corners=Non
 
             crop_in_place(cropped, photo_corners)
             n += 1
+            if progress_callback:
+                try:
+                    progress_callback(n, total_count, f, str(d))
+                except Exception:
+                    pass
             
-    return n
+    return n
